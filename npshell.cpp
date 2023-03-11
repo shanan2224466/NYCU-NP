@@ -17,7 +17,7 @@
 using namespace std;
 #define TEST true
 #define MAX_LENGTH 100
-#define MAX_PIPE 500
+#define MAX_PROCESS 100
 #define MAX_CMD 10
 
 /* index, numbered, type, comm */
@@ -62,17 +62,17 @@ void get_env(string var){
 
 void print_pipelist(const vector<struct Pipe> &pipe_list){
     for (const auto &p : pipe_list)
-        cout << " numbered: " << left << setw(15) << p.index << " pipe: " << p.pipefd[0] << ", " << p.pipefd[1] << endl;
+        cout << " numbered: " << left << setw(25) << p.index << " pipe: " << p.pipefd[0] << ", " << p.pipefd[1] << endl;
 }
 
-void print_com_list(const vector<struct Command> &com_list){
+void print_comlist(const vector<struct Command> &com_list){
     for (const auto &c : com_list)
         cout << c.index << " command: " << left << setw(15) << c.comm << " numbered: " << left << setw(3) << c.numbered << " type: " << c.type << endl;
 }
 
 /* Close all tmp_pipe except those pipes that were stored in the pipe_list. */
 void close_tmppipe(int tmp_pipe[][2], vector<struct Pipe> &pipe_list){
-    for (int i = 0; i < MAX_PIPE; i++){
+    for (int i = 0; i < MAX_PROCESS; i++){
         int tmp = tmp_pipe[i][0];
         auto it = find_if(pipe_list.begin(), pipe_list.end(), [tmp, i](const struct Pipe &p){return tmp == p.pipefd[0];});
         /* If the tmp_pipe is not in the pipe_list. */
@@ -82,18 +82,33 @@ void close_tmppipe(int tmp_pipe[][2], vector<struct Pipe> &pipe_list){
         }
     }
 }
+/* Close the outdated pipe file descriptor. */
+void close_pipelist(vector<struct Pipe> &pipe_list){
+    for (auto it = pipe_list.begin(); it != pipe_list.end();){
+        /* index is an unsigned long int. */
+        if ((ssize_t)it->index < 0){
+            close(it->pipefd[0]);
+            close(it->pipefd[1]);
+            it = pipe_list.erase(it);
+        }
+        else{
+            ++it;
+        }
+    }
+}
 
 void wait_pid(const vector<int> &pid_list){
     int status;
-    for (const auto &it : pid_list)
+    for (const auto &it : pid_list){
         waitpid(it, &status, 0);
+    }
 }
 
 /* Check if the pipe of the command should be in the pipe_list. */
 bool store_pipelist(int count, size_t com_listsize, const struct Command &it, const vector<struct Pipe> pipe_list){
     /* There are some conditions that the pipe should be kept in the list.
-       The command attempts to write to the command (i) which is not right behind it. (ii) which is not in the current command line. (iii) which is exceed the MAX_PIPE capacity. */
-    if (it.numbered > 1 || it.index + it.numbered >= com_listsize || count + it.numbered >= MAX_PIPE){
+       The command attempts to write to the command (i) which is not right behind it. (ii) which is not in the current command line. (iii) which is exceed the MAX_PROCESS capacity. */
+    if (it.numbered > 1 || it.index + it.numbered >= com_listsize || (count % MAX_PROCESS) + it.numbered >= MAX_PROCESS){
         /* If there was one previous command already attempted to write to the command that you wanna write to,
            it should not be store in the pipe_list. You just redirect the stdout to the existing pipe writing end.*/
         for (const auto &item : pipe_list){
@@ -164,12 +179,14 @@ int run(char **argv, bool error, int in, int out, int tmp_pipe[][2], vector<stru
             close(it.pipefd[1]);
         }
         if (execvp(argv[0], argv) == -1){
-            cerr << "** execvp error **" << endl;
+            perror("Execvp error");
+            cerr << "errno: " << errno << endl;
             exit(1);
         }
     }
     else if (pid < 0){
-        cerr << "** fork error **" << endl;
+        perror("Fork error");
+        cerr << "errno: " << errno << endl;
         exit(1);
     }
     return pid;
@@ -177,7 +194,7 @@ int run(char **argv, bool error, int in, int out, int tmp_pipe[][2], vector<stru
 
 void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
     /* For those commands attempt to write to the later command that is locate at the current input line. */
-    int count = 0, tmp_pipe[MAX_PIPE][2];
+    int count = 0, tmp_pipe[MAX_PROCESS][2];
     vector<int> pid_list;
     for (auto &it : com_list){
         string filename = "";
@@ -196,22 +213,24 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
             }
         }
 
-        if (count / MAX_PIPE > 0){
+        if (count / MAX_PROCESS > 0 && !(count % MAX_PROCESS)){
             close_tmppipe(tmp_pipe, pipe_list);
             wait_pid(pid_list);
             pid_list.clear();
         }
-        if (count % MAX_PIPE == 0){
-            for (int i = 0; i < MAX_PIPE; i++){
+        
+        if (count % MAX_PROCESS == 0){
+            for (int i = 0; i < MAX_PROCESS; i++){
                 if(pipe(tmp_pipe[i]) == -1){
-                    cerr << "** pipe error **" << endl;
+                    perror("Pipe error");
+                    cerr << "errno: " << errno << endl;
                     exit(1);
                 }
             }
         }
         
         if (store_pipelist(count, com_list.size(), it, pipe_list)){
-            struct Pipe tmp = {it.numbered, {tmp_pipe[count % MAX_PIPE][0], tmp_pipe[count % MAX_PIPE][1]}};
+            struct Pipe tmp = {it.numbered, {tmp_pipe[count % MAX_PROCESS][0], tmp_pipe[count % MAX_PROCESS][1]}};
             pipe_list.push_back(tmp);
         }
 
@@ -220,8 +239,12 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
         auto match = command_set.find(argv[0]);
         if (match != command_set.end()){
             /* Initialize the writing end to the current pipe[1], and the reading end to the previous pipe[0]. */
-            int in = tmp_pipe[(count + 499) % MAX_PIPE][0], out = tmp_pipe[count % MAX_PIPE][1];
-
+            int in = tmp_pipe[(count + 499) % MAX_PROCESS][0], out = tmp_pipe[count % MAX_PROCESS][1];
+            
+            bool error = false;
+            if (it.type == '!')
+                error = true;
+            
             /* (i) There was a pipe writes to the current command. (ii) There was a command writes to the same future command. */
             for (size_t i = 0; i < pipe_list.size(); i++){
                 if (pipe_list[i].index == 0)
@@ -234,17 +257,18 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
             if (!filename.empty()){
                 /* The permission flag (user, group, others) needs at least S_IRWXU. */
                 if ((out = open(filename.c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IROTH)) == -1){
-                    cerr << "Error opening file" << endl;
+                    perror("Error opening file");
                     cout << "errno: " << errno << endl;
                     exit(1);
                 }
+                int pid = run(argv, error, in, out, tmp_pipe, pipe_list);
+                pid_list.push_back(pid);
+                close(out);
             }
-            bool error = false;
-            if (it.type == '!')
-                error = true;
-            int pid = run(argv, error, in, out, tmp_pipe, pipe_list);
-            /* Wait MAX_PIPE processes every MAX_PIPE rounds. */
-            pid_list.push_back(pid);
+            else{
+                int pid = run(argv, error, in, out, tmp_pipe, pipe_list);
+                pid_list.push_back(pid);
+            }
         }
         else{
             cerr << "Unknown command: [" << argv[0] << "]." << endl;
@@ -252,26 +276,20 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
         for (auto &it : pipe_list)
             it.index--;
         count++;
+        /* For spec 3.5.8. If the parent close() outside the loop, the later child process will hang forever.
+           Since all processes (including parent process) close the write end of a pipe, then the read end
+           would receive the EOF. Any process hasn't close it, would cause the child process (such as cat)
+           waits for the pipe's read end. */
+        close_pipelist(pipe_list);
     }
     close_tmppipe(tmp_pipe, pipe_list);
-    for (auto it = pipe_list.begin(); it != pipe_list.end();){
-        /* index is an unsigned long int. (index > SIZE / MAX) implies index is negative. */
-        if (it->index > SIZE_MAX / 2){
-            close(it->pipefd[0]);
-            close(it->pipefd[1]);
-            it = pipe_list.erase(it);
-        }
-        else{
-            ++it;
-        }
-    }
     wait_pid(pid_list);
 }
 /* Preprocess the built-in commands which can be refered to spec 3.3 */
 void pre_execute(string &s, vector<struct Pipe> &pipe_list){
     vector<struct Command> com_list;
     get_comlist(s, com_list);
-    //print_com_list(com_list);
+    //print_comlist(com_list);
     
     int i = 0;
     string command[MAX_CMD];
@@ -284,12 +302,18 @@ void pre_execute(string &s, vector<struct Pipe> &pipe_list){
             set_env(command[1], command[2], 1);
         else
             cerr << "Syntax: setenv [variable] [value]" << endl;
+        /* For spec 3.5.6 */
+        for (auto &it : pipe_list)
+            it.index--;
     }
     else if (command[0] == "printenv"){
         if (!command[1].empty())
             get_env(command[1]);
         else
             cerr << "Syntax: printenv [variable]" << endl;
+        /* For spec 3.5.6 */
+        for (auto &it : pipe_list)
+            it.index--;
     }
     else{
         execute(com_list, pipe_list);
