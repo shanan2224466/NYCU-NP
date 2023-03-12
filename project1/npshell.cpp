@@ -191,9 +191,8 @@ int run(char **argv, bool error, int in, int out, int tmp_pipe[][2], vector<stru
     }
     return pid;
 }
-
+/* Process the commands at the current input line. */
 void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
-    /* For those commands attempt to write to the later command that is locate at the current input line. */
     int count = 0, tmp_pipe[MAX_PROCESS][2];
     vector<int> pid_list;
     for (auto &it : com_list){
@@ -213,12 +212,14 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
             }
         }
 
+        /* Close pipes and wait for the child processes when the amount of the forked processes exceed MAX_PROCESS. */
         if (count / MAX_PROCESS > 0 && !(count % MAX_PROCESS)){
             close_tmppipe(tmp_pipe, pipe_list);
             wait_pid(pid_list);
             pid_list.clear();
         }
         
+        /* Initialize MAX_PROCESS pipes at the beginning of every MAX_PROCESS rounds. */
         if (count % MAX_PROCESS == 0){
             for (int i = 0; i < MAX_PROCESS; i++){
                 if(pipe(tmp_pipe[i]) == -1){
@@ -234,7 +235,6 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
             pipe_list.push_back(tmp);
         }
 
-        /* match is to indicate if the command[0] is the following command. */
         set<string> command_set {"ls", "cat", "number", "removetag", "removetag0", "noop"};
         auto match = command_set.find(argv[0]);
         if (match != command_set.end()){
@@ -261,14 +261,11 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
                     cout << "errno: " << errno << endl;
                     exit(1);
                 }
-                int pid = run(argv, error, in, out, tmp_pipe, pipe_list);
-                pid_list.push_back(pid);
+            }
+            int pid = run(argv, error, in, out, tmp_pipe, pipe_list);
+            pid_list.push_back(pid);
+            if (!filename.empty())
                 close(out);
-            }
-            else{
-                int pid = run(argv, error, in, out, tmp_pipe, pipe_list);
-                pid_list.push_back(pid);
-            }
         }
         else{
             cerr << "Unknown command: [" << argv[0] << "]." << endl;
@@ -279,7 +276,7 @@ void execute(vector<struct Command> &com_list, vector<struct Pipe> &pipe_list){
         /* For spec 3.5.8. If the parent close() outside the loop, the later child process will hang forever.
            Since all processes (including parent process) close the write end of a pipe, then the read end
            would receive the EOF. Any process hasn't close it, would cause the child process (such as cat)
-           waits for the pipe's read end. */
+           waits for the read end receive any further input. */
         close_pipelist(pipe_list);
     }
     close_tmppipe(tmp_pipe, pipe_list);
@@ -322,7 +319,6 @@ void pre_execute(string &s, vector<struct Pipe> &pipe_list){
 }
 
 int main(int argc, char* argv[]){
-    /* pipe_list is for those commands attempt to write to the future command that is not locate at the current input line. */
     vector<struct Pipe> pipe_list;
     set_env("PATH", "bin:.", 1);
     if (TEST)
@@ -335,7 +331,6 @@ int main(int argc, char* argv[]){
             cout << s << endl;
         if (s == "")
             continue;
-        /* last_index is the index of how many commands in the com_list we have processed. */
         pre_execute(s, pipe_list);
     }
     
