@@ -22,7 +22,7 @@ using namespace std;
 
 /* index, numbered, type, comm */
 struct Command{
-    // Count down the numbered pipe.
+    // Command index of the current line.
     size_t index;
     // Numbered pipe (i) 0 means write to the stdout. (ii) '|' has numbered = 1.
     size_t numbered;
