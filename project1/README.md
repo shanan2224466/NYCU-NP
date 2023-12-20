@@ -319,8 +319,8 @@ need to guarantee that all the output of this command is piped correctly.
 can run. In this case, you still need to guarantee that all commands are executed properly.
 
     Examples:
-    # Suppose the process limit is 512 and there are 1000 `cat` in one line.
-    # All commands in this line should be executed properly.
+    Suppose the process limit is 512 and there are 1000 `cat` in one line.
+    All commands in this line should be executed properly.
     ```
     % ls | cat | cat ...... | cat
     bin
