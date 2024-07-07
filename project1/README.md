@@ -14,7 +14,7 @@ More details will be defined in Section 3.
 ### 2.1 Structure of Working Directory
 
 Example:
-```
+```shell script=
 working_dir
 |-- bin            # Executables may be added to or removed from bin/
 | |-- cat
@@ -29,7 +29,7 @@ working_dir
 
 ## 2.2 Scenario
 The following is a scenario of using the npshell.
-```
+```shell script=
 bash$ ./npshell        # execute your npshell
 % printenv PATH        # initial PATH is bin/ and ./
 bin:.
@@ -186,7 +186,7 @@ bash$
 3. There must be one or more spaces between commands, arguments, pipe symbol `|`, and redirection symbol `>`, but no spaces between pipe and numbers for numbered-pipe.
 
     Examples:
-    ```
+    ```shell script=
     % ls -l | cat
     % ls > hello.txt
     % cat hello.txt |4 # no space between "|" and "4"
@@ -204,7 +204,7 @@ bash$
       If var already exists in the environment, change the value of var to value.
       
       Examples:
-      ```
+      ```shell script=
       % setenv PATH bin # set PATH to bin
       % setenv PATH bin:npbin # set PATH to bin:npbin
       ```
@@ -214,7 +214,7 @@ bash$
      If var does not exist in the environment, show nothing.
      
      Examples:
-      ```
+      ```shell script=
       % printenv LANG
       en_US.UTF-8
       % printenv VAR1 # show nothing if the variable does not exist
@@ -235,7 +235,7 @@ bash$
 Unknown command: [command].
 
     Examples:
-    ```
+    ```shell script=
     % ctt
     Unknown command: [ctt].
     ```
@@ -243,7 +243,7 @@ Unknown command: [command].
 2. You do not need to print the arguments of unknown commands.
 
     Examples:
-    ```
+    ```shell script=
     % ctt -n
     Unknown command: [ctt].
     ```
@@ -251,7 +251,7 @@ Unknown command: [command].
 3. The commands after unknown commands will still be executed.
 
     Examples:
-    ```
+    ```shell script=
     % ctt | ls
     Unknown command: [ctt].
     bin npshell test.html
@@ -259,7 +259,7 @@ Unknown command: [command].
 
 4. Messages piped to unknown commands will disappear.
     Examples:
-    ```
+    ```shell script=
     % ls | ctt
     Unknown command: [ctt].
     ```
@@ -269,7 +269,7 @@ Unknown command: [command].
 command will be piped to the right hand side command.
 
     Examples:
-    ```
+    ```shell script=
     % ls | cat # The output of command "ls" acts as the input of command "cat"
     bin
     npshell
@@ -286,7 +286,7 @@ first command of the next N-th line, where 1 ≤ N ≤ 1000.
 pipe, but the empty line does not.
 
     Examples:
-    ```
+    ```shell script=
     % ls |2
     % ctt
     Unknown command: [ctt].
@@ -307,7 +307,7 @@ likely that the output of this command exceeds the capacity of the pipe. In this
 need to guarantee that all the output of this command is piped correctly.
 
     Examples:
-    ```
+    ```shell script=
     % cat large_file.txt | number # All output of "cat" should be piped correctly
     <many outputs...>
     % cat large_file.txt |1 # All output of "cat" should be piped correctly
@@ -321,7 +321,7 @@ can run. In this case, you still need to guarantee that all commands are execute
     Examples:
     Suppose the process limit is 512 and there are 1000 `cat` in one line.
     All commands in this line should be executed properly.
-    ```
+    ```shell script=
     % ls | cat | cat ...... | cat
     bin
     npshell
@@ -334,7 +334,7 @@ process (not forked yet), but the process limit is reached.
 of the command will be written to files.
 
     Examples:
-    ```
+    ```shell script=
     # The output of command "ls" is redirected to file "hello.txt"
     % ls > hello.txt
     % cat hello.txt
@@ -350,7 +350,7 @@ of the command will be written to files.
 7. You do not need to handle outputting to both the file and the pipe for the same command.
 
     Examples:
-    ```
+    ```shell script=
     % ls > f1.txt > f2.txt         # This will not happen
     % ls > hello.txt | cat         # This will not happen
     % ls > hello.txt |2            # This will not happen
@@ -368,7 +368,7 @@ data into temporary files is NOT allowed for ordinary pipe and numbered pipe.
 6. You should set the environment variable PATH to `bin/` and `./` initially.
 
     Examples:
-    ```
+    ```shell script=
     bash$ ./npshell # execute your npshell
     % printenv PATH # initial PATH is bin/ and ./
     bin:.
@@ -379,14 +379,14 @@ data into temporary files is NOT allowed for ordinary pipe and numbered pipe.
 download them from E3 and compile.
 
     Examples:
-    ```
+    ```shell script=
     g++ noop.cpp -o $working_dir/bin/noop
     ```
 9. The executables `ls` and `cat` are usually placed in the folder `/bin/` in UNIX-like systems. You
 can copy them to your working directory.
 
     Examples:
-    ```
+    ```shell script=
     cp /bin/ls /bin/cat $working_dir/bin/
     ```
 10. During demo, TA will prepare these commands (executables) for you, so you do NOT need
@@ -409,7 +409,7 @@ servers.
     Attention!! we only accept .zip format
 
        Example:
-       ```
+       ```shell script=
        309554042
        |-- Makefile
        |-- npshell.cpp
