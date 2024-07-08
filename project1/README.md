@@ -408,13 +408,13 @@ servers.
     (c) zip the directory and upload the .zip file to E3.
     Attention!! we only accept .zip format
 
-       Example:
-       ```shell script=
-       309554042
-       |-- Makefile
-       |-- npshell.cpp
-       |...
-       ```
+    Example:
+    ```shell script=
+    309554042
+    |-- Makefile
+    |-- npshell.cpp
+    |...
+    ```
     Zip the folder 309554042 into 309554042.zip and upload 309554042.zip to E3
 * Bitbucket:
 
