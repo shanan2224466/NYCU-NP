@@ -453,25 +453,29 @@ your_working_directory
   - Create a directory named your student ID, put ONLY your source code files into the directory. DO NOT upload anything else (e.g. np simple, np single proc, np multi proc, noop, removetag, test.html, .git, MACOSX)
   - You must provide Makefile.Three executable files named np simple (server 1), np single proc (server 2), np multi proc (server 3) should be produced after typing make command in top layer of the directory.
   - All servers should listen on the port assigned by the first argument.
+
     Example:
 
       ./np_single_proc 12345 # Listen on port 12345
 
   - zip the directory and upload the .zip file to E3.
     Attention !! we only accept .zip format
+
     Example:
 
-    311550000
-      |-- Makefile
-      |-- np_simple.cpp # Server1
-      |-- np_single_proc.cpp # Server2
-      |-- np_multi_proc.cpp # Server3
-      |...
+        311550000
+        |-- Makefile
+        |-- np_simple.cpp # Server1
+        |-- np_single_proc.cpp # Server2
+        |-- np_multi_proc.cpp # Server3
+        |...
 
     Zip the folder 311550000 into 311550000.zip and upload 311550000.zip to E3
 2. Bitbucket:
   - Create a private repository with name: ${Your Student ID} np project2 inside the workspace nycu np 2022 and the project np project2.
+
       e.g., 311550000_np_project2
+
   - You can push anything to Bitbucket, but make sure to commit at least 5 times.
 
 ## 7 Notes
