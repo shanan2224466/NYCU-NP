@@ -451,7 +451,7 @@ your_working_directory
 ## 6 Submission
 1. E3:
   - Create a directory named your student ID, put ONLY your source code files into the directory. DO NOT upload anything else (e.g. np simple, np single proc, np multi proc, noop, removetag, test.html, .git, MACOSX)
-  - You must provide Makefile.Three executable files named np simple (server 1), np single proc (server 2), np multi proc (server 3) should be produced after typing make command in top layer of the directory.
+  - You must provide Makefile. Three executable files named np simple (server 1), np single proc (server 2), np multi proc (server 3) should be produced after typing make command in top layer of the directory.
   - All servers should listen on the port assigned by the first argument.
 
     Example:
