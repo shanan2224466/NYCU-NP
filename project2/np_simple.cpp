@@ -111,6 +111,14 @@ static vector<Command> parse_line(const string& line) {
             cur.pipe_type = ' ';
             cur.pipe_n    = 0;
 
+        } else if (t == "!") {
+            cur.pipe_type = '!';
+            cur.pipe_n    = 0;
+            cmds.push_back(cur);
+            cur = Command();
+            cur.pipe_type = ' ';
+            cur.pipe_n    = 0;
+
         } else if (t.size() >= 2 && t[0] == '|' && isdigit((unsigned char)t[1])) {
             cur.pipe_type = '|';
             cur.pipe_n    = stoi(t.substr(1));
@@ -157,7 +165,7 @@ static int find_ready_npipe() {
     return -1;
 }
 
-static int get_npipe_write(int n, bool merge_stderr) {
+static int get_npipe_write(int n) {
     for (auto &np : g_npipes)
         if (np.countdown == n)
             return np.fd[1];
@@ -166,7 +174,6 @@ static int get_npipe_write(int n, bool merge_stderr) {
     np.countdown = n;
     safe_pipe(np.fd);
     g_npipes.push_back(np);
-    (void)merge_stderr;
     return np.fd[1];
 }
 
@@ -228,7 +235,7 @@ static void execute_line(vector<Command> &cmds, int client_fd, int server_fd) {
                 close_out     = true;
 
             } else if (cmd.pipe_type == '|' || cmd.pipe_type == '!') {
-                out_fd = get_npipe_write(cmd.pipe_n, cmd.pipe_type == '!');
+                out_fd = get_npipe_write(cmd.pipe_n);
                 if (cmd.pipe_type == '!')
                     err_fd = out_fd;
                 close_out = false;
@@ -288,7 +295,6 @@ static void execute_line(vector<Command> &cmds, int client_fd, int server_fd) {
         }
 
         wait_pids(batch_pids);
-
         batch_start = batch_end;
     }
 

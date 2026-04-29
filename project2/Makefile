@@ -5,13 +5,16 @@ ROUTE := bin/
 # NEVER MISS USE THE PATH BY WRITTING "PATH := bin/".
 # OTHERWISE ALL THE COMMANDS WILL NOT BE AVAILABLE.
 
-TARGET := np_simple noop number removetag removetag0
+TARGET := np_simple np_single_proc noop number removetag removetag0
 
 .PHONY: clean all
 
 all: $(TARGET)
 
 np_simple: np_simple.cpp
+	$(CXX) $(CXXFLAG) $< -o $@
+
+np_single_proc: np_single_proc.cpp
 	$(CXX) $(CXXFLAG) $< -o $@
 
 noop: $(ROUTE)noop.cpp
