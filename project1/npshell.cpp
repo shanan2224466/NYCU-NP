@@ -15,7 +15,7 @@
 #include <sys/types.h>
 
 using namespace std;
-#define TEST true
+#define TEST false
 #define MAX_LENGTH 100
 #define MAX_PROCESS 100
 #define MAX_CMD 10

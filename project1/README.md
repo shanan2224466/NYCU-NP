@@ -37,7 +37,6 @@ bin:.
 % printenv PATH
 bin
 % ls
-1
 bin npshell test.html
 % ls bin
 cat ls noop number removetag removetag0
