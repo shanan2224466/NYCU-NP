@@ -35,6 +35,10 @@ struct Command {
     string         outfile;
     char           pipe_type;
     int            pipe_n;
+};
+
+struct LineContext {
+    vector<Command> cmds;
     int            user_pipe_to = 0;
     int            user_pipe_from = 0;
 };
@@ -48,6 +52,36 @@ struct Client {
     unordered_map<string , string> env = {{"PATH", "bin:."}};
     vector<NumberedPipe> g_npipes;
 };
+ 
+static vector<struct UserPipe> g_user_pipes;
+
+void create_user_pipe(int from_id, int to_id) {
+    UserPipe up;
+    up.from_id = from_id;
+    up.to_id = to_id;
+    pipe(up.fd);
+    g_user_pipes.push_back(up);
+}
+
+void remove_user_pipe(int from_id, int to_id) {
+    for (size_t i = 0; i < g_user_pipes.size(); i++) {
+        if (g_user_pipes[i].from_id == from_id && g_user_pipes[i].to_id == to_id) {
+            close(g_user_pipes[i].fd[0]);
+            close(g_user_pipes[i].fd[1]);
+            g_user_pipes.erase(g_user_pipes.begin() + i);
+            break;
+        }
+    }
+}
+
+int getpipeto(int from_id, int to_id) {
+    for (size_t i = 0; i < g_user_pipes.size(); i++) {
+        if (g_user_pipes[i].from_id == from_id && g_user_pipes[i].to_id == to_id) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 static vector<Client> clients;
 
@@ -117,9 +151,10 @@ int add_client(int client_fd, const char *ip, int port) {
 void remove_client(int client_fd) {
     for (size_t i = 0; i < clients.size(); i++) {
         if (clients[i].fd == client_fd) {
+            close(clients[i].fd);
+            clients.erase(clients.begin() + i);
             string logout = "*** User " + clients[i].name + " left. ***\n";
             broadcast_msg(logout.c_str());
-            clients.erase(clients.begin() + i);
             break;
         }
     }
@@ -313,9 +348,9 @@ static int handle_builtin(const vector<string> &args, int client_fd) {
     return 0;
 }
 
-static vector<Command> parse_line(const string& line) {
+static LineContext parse_line(const string& line) {
+    LineContext ctx;
     vector<string>  tokens = tokenize(line);
-    vector<Command> cmds;
     Command         cur;
     cur.pipe_type = ' ';
     cur.pipe_n    = 0;
@@ -326,7 +361,7 @@ static vector<Command> parse_line(const string& line) {
         if (t == "|") {
             cur.pipe_type = '|';
             cur.pipe_n    = 0;
-            cmds.push_back(cur);
+            ctx.cmds.push_back(cur);
             cur = Command();
             cur.pipe_type = ' ';
             cur.pipe_n    = 0;
@@ -334,15 +369,21 @@ static vector<Command> parse_line(const string& line) {
         } else if (t == "!") {
             cur.pipe_type = '!';
             cur.pipe_n    = 0;
-            cmds.push_back(cur);
+            ctx.cmds.push_back(cur);
             cur = Command();
             cur.pipe_type = ' ';
             cur.pipe_n    = 0;
 
+        } else if (t.size() >= 2 && t[0] == '>' && isdigit((unsigned char)t[1])) {
+            ctx.user_pipe_to = stoi(t.substr(1));
+
+        } else if (t.size() >= 2 && t[0] == '<' && isdigit((unsigned char)t[1])) {
+            ctx.user_pipe_from = stoi(t.substr(1));
+
         } else if (t.size() >= 2 && t[0] == '|' && isdigit((unsigned char)t[1])) {
             cur.pipe_type = '|';
             cur.pipe_n    = stoi(t.substr(1));
-            cmds.push_back(cur);
+            ctx.cmds.push_back(cur);
             cur = Command();
             cur.pipe_type = ' ';
             cur.pipe_n    = 0;
@@ -350,31 +391,10 @@ static vector<Command> parse_line(const string& line) {
         } else if (t.size() >= 2 && t[0] == '!' && isdigit((unsigned char)t[1])) {
             cur.pipe_type = '!';
             cur.pipe_n    = stoi(t.substr(1));
-            cmds.push_back(cur);
+            ctx.cmds.push_back(cur);
             cur = Command();
             cur.pipe_type = ' ';
             cur.pipe_n    = 0;
-
-        } else if (t.size() >= 2 && t[0] == '>' && isdigit((unsigned char)t[1])) {
-            cur.pipe_type = '>';
-            cur.pipe_n    = 0;
-            cur.user_pipe_to = stoi(t.substr(1));
-            cmds.push_back(cur);
-            cur = Command();
-            cur.pipe_type = ' ';
-            cur.pipe_n    = 0;
-            cur.user_pipe_to = 0;
-
-
-        } else if (t.size() >= 2 && t[0] == '<' && isdigit((unsigned char)t[1])) {
-            cur.pipe_type = '<';
-            cur.pipe_n    = 0;
-            cur.user_pipe_from = stoi(t.substr(1));
-            cmds.push_back(cur);
-            cur = Command();
-            cur.pipe_type = ' ';
-            cur.pipe_n    = 0;
-            cur.user_pipe_from = 0;
 
         } else if (t == ">") {
             if (i + 1 < tokens.size()) {
@@ -387,9 +407,9 @@ static vector<Command> parse_line(const string& line) {
     }
 
     if (!cur.args.empty())
-        cmds.push_back(cur);
+        ctx.cmds.push_back(cur);
 
-    return cmds;
+    return ctx;
 }
 
 static void safe_pipe(int fd[2]) {
@@ -406,74 +426,129 @@ static void wait_pids(const vector<pid_t> &pids) {
 }
 
 int get_client_id(int client_fd) {
-    for (const auto &c : clients) {
-        if (c.fd == client_fd) {
-            return c.id;
+    for (size_t i = 0; i < clients.size(); i++) {
+        if (clients[i].fd == client_fd) {
+            return clients[i].id;
+        }
+    }
+    return -1;
+}
+
+int get_client_index(int client_fd) {
+    for (size_t i = 0; i < clients.size(); i++) {
+        if (clients[i].fd == client_fd) {
+            return i;
         }
     }
     return -1;
 }
 
 static void tick_numbered_pipes(int client_fd) {
-    int client_id = get_client_id(client_fd);
-    for (auto &np : clients[client_id].g_npipes)
+    int idx = get_client_index(client_fd);
+    for (auto &np : clients[idx].g_npipes)
         np.countdown--;
 }
 
 static int find_ready_npipe(int client_fd) {
-    int client_id = get_client_id(client_fd);
-    for (int i = 0; i < (int)clients[client_id].g_npipes.size(); i++)
-        if (clients[client_id].g_npipes[i].countdown == 0)
+    int idx = get_client_index(client_fd);
+    for (size_t i = 0; i < clients[idx].g_npipes.size(); i++)
+        if (clients[idx].g_npipes[i].countdown == 0)
             return i;
     return -1;
 }
 
 static int get_npipe_write(int n, int client_fd) {
-    int client_id = get_client_id(client_fd);
-    for (auto &np : clients[client_id].g_npipes)
+    int idx = get_client_index(client_fd);
+    for (auto &np : clients[idx].g_npipes)
         if (np.countdown == n)
             return np.fd[1];
 
     NumberedPipe np;
     np.countdown = n;
     safe_pipe(np.fd);
-    clients[client_id].g_npipes.push_back(np);
+    clients[idx].g_npipes.push_back(np);
     return np.fd[1];
 }
 
-static const int BATCH_SIZE = 50;
+int print_userpipe_msg(LineContext &ctx, int client_fd, string &line) {
+    int id  = get_client_id(client_fd);
+    int idx = get_client_index(client_fd);
 
-static void execute_line(vector<Command> &cmds, int client_fd, int server_fd) {
-    if (cmds.empty()) return;
+    if (getpipeto(ctx.user_pipe_from, id) == -1 && ctx.user_pipe_from != 0) {
+        if (ctx.user_pipe_from > (int)clients.size()) {
+            string msg = "*** Error: user #" + to_string(ctx.user_pipe_from) + " does not exist yet. ***\n";
+            send_msg(client_fd, msg.c_str());
+            return -1;
+        }
+        string msg = "*** Error: the pipe #" + to_string(ctx.user_pipe_from) + "->#" + to_string(id) + " already exist yet. ***\n";
+        send_msg(client_fd, msg.c_str());
+        return -1;
+    }
+    if (getpipeto(id, ctx.user_pipe_to) > 0 && ctx.user_pipe_to != 0) {
+        if (ctx.user_pipe_to > (int)clients.size()) {
+            string msg = "*** Error: user #" + to_string(ctx.user_pipe_to) + " does not exist yet. ***\n";
+            send_msg(client_fd, msg.c_str());
+            return -1;
+        }
+        string msg = "*** Error: the pipe #" + to_string(id) + "->#" + to_string(ctx.user_pipe_to) + " already exists. ***\n";
+        send_msg(client_fd, msg.c_str());
+        return -1;
+    }
+
+    if (ctx.user_pipe_from != 0) {
+        int pipe_idx = getpipeto(ctx.user_pipe_from, id);
+        if (pipe_idx != -1) {
+            string msg = "*** " + clients[idx].name + " (#" + to_string(id) + ") just received from " + clients[ctx.user_pipe_from - 1].name + " (#" + to_string(ctx.user_pipe_from) + ") by '" + line + "' ***\n";
+            int from_fd = clients[ctx.user_pipe_from - 1].fd;
+            send_msg(from_fd, msg.c_str());
+        }
+    }
+    if (ctx.user_pipe_to != 0) {
+        string msg = "*** " + clients[idx].name + " (#" + to_string(id) + ") just piped '" + line + "' to " + clients[ctx.user_pipe_to - 1].name + " (#" + to_string(ctx.user_pipe_to) + ") ***\n";
+        int to_fd = clients[ctx.user_pipe_to - 1].fd;
+        send_msg(to_fd, msg.c_str());
+    }
+    return 0;
+}
+
+static void execute_line(LineContext &ctx, int client_fd, int server_fd) {
+    if (ctx.cmds.empty()) return;
 
     int ordinary_read = -1;
+    static const int BATCH_SIZE = 50;
 
     size_t batch_start = 0;
+    int idx = get_client_index(client_fd);
+    setenv("PATH", clients[idx].env["PATH"].c_str(), 1);
 
-    while (batch_start < cmds.size()) {
-        size_t batch_end = min(batch_start + (size_t)BATCH_SIZE, cmds.size());
+    while (batch_start < ctx.cmds.size()) {
+        size_t batch_end = min(batch_start + (size_t)BATCH_SIZE, ctx.cmds.size());
 
         vector<pid_t> batch_pids;
 
         for (size_t idx = batch_start; idx < batch_end; idx++) {
-            Command &cmd = cmds[idx];
-
-            dup2(client_fd, STDIN_FILENO);
-            dup2(client_fd, STDOUT_FILENO);
-            dup2(client_fd, STDERR_FILENO);
+            Command &cmd = ctx.cmds[idx];
 
             int in_fd = STDIN_FILENO;
 
             if (ordinary_read != -1) {
                 in_fd = ordinary_read;
                 ordinary_read = -1;
+
             } else {
                 int npi = find_ready_npipe(client_fd);
                 if (npi != -1) {
-                    int idx = get_client_id(client_fd);
-                    close(clients[idx].g_npipes[npi].fd[1]);
-                    in_fd = clients[idx].g_npipes[npi].fd[0];
-                    clients[idx].g_npipes.erase(clients[idx].g_npipes.begin() + npi);
+                    int id = get_client_index(client_fd);
+                    close(clients[id].g_npipes[npi].fd[1]);
+                    in_fd = clients[id].g_npipes[npi].fd[0];
+                    clients[id].g_npipes.erase(clients[id].g_npipes.begin() + npi);
+                }
+            }
+
+            if (ctx.user_pipe_from != 0 && idx == 0) {
+                int pipe_idx = getpipeto(ctx.user_pipe_from, get_client_id(client_fd));
+                if (pipe_idx != -1) {
+                    in_fd = g_user_pipes[pipe_idx].fd[0];
                 }
             }
 
@@ -506,12 +581,23 @@ static void execute_line(vector<Command> &cmds, int client_fd, int server_fd) {
                 close_out = false;
             }
 
+            if (ctx.user_pipe_to != 0 && idx == ctx.cmds.size() - 1) {
+                int idx = get_client_index(client_fd);
+                create_user_pipe(clients[idx].id, ctx.user_pipe_to);
+                out_fd = g_user_pipes.back().fd[1];
+                close_out = true;
+            }
+
             pid_t pid = fork();
             if (pid < 0) {
                 perror("fork");
                 exit(EXIT_FAILURE);
 
             } else if (pid == 0) {
+
+                dup2(client_fd, STDIN_FILENO);
+                dup2(client_fd, STDOUT_FILENO);
+                dup2(client_fd, STDERR_FILENO);
 
                 if (in_fd != STDIN_FILENO) {
                     dup2(in_fd, STDIN_FILENO);
@@ -522,18 +608,23 @@ static void execute_line(vector<Command> &cmds, int client_fd, int server_fd) {
                 if (err_fd != STDERR_FILENO)
                     dup2(err_fd, STDERR_FILENO);
 
-                int idx = get_client_id(client_fd);
-                for (auto &np : clients[idx].g_npipes) {
-                    close(np.fd[0]);
-                    close(np.fd[1]);
+                for (auto &c : clients) {
+                    for (auto &np : c.g_npipes) {
+                        close(np.fd[0]);
+                        close(np.fd[1]);
+                    }
                 }
+                for (auto &up : g_user_pipes) {
+                    close(up.fd[0]);
+                    close(up.fd[1]);
+                }
+
                 if (ordinary_read != -1)
                     close(ordinary_read);
                 if (out_fd != STDOUT_FILENO && out_fd != err_fd)
                     close(out_fd);
                 if (err_fd != STDERR_FILENO)
                     close(err_fd);
-                close(client_fd);
 
                 vector<char*> argv;
                 for (auto &a : cmd.args)
@@ -550,13 +641,18 @@ static void execute_line(vector<Command> &cmds, int client_fd, int server_fd) {
             } else {
                 batch_pids.push_back(pid);
 
-                if (in_fd != STDIN_FILENO)
+                if (in_fd != STDIN_FILENO) {
                     close(in_fd);
+                    if (ctx.user_pipe_from != 0 && idx == 0) {
+                        int pipe_idx = getpipeto(ctx.user_pipe_from, get_client_id(client_fd));
+                        if (pipe_idx != -1) close(g_user_pipes[pipe_idx].fd[1]);
+                        g_user_pipes.erase(g_user_pipes.begin() + pipe_idx);
+                    }
+                }
 
                 if (close_out) {
                     close(out_fd);
                 }
-
             }
         }
 
@@ -610,19 +706,20 @@ int main() {
 
                         line.erase(line.find_last_not_of(" \t\r\n") + 1);
 
-                        vector<Command> cmds = parse_line(line);
-                        if (cmds.empty()) continue;
+                        LineContext ctx;
+                        ctx = parse_line(line);
+                        if (ctx.cmds.empty()) continue;
 
-                        int stat = handle_builtin(cmds[0].args, fd);
+                        int stat = handle_builtin(ctx.cmds[0].args, fd);
                         if (stat == -1) {
-                            close(fd);
                             FD_CLR(fd, &current_fd_set);
+                            continue;;
                         }
 
-                        // if (stat == 0) {
-                        //     execute_line(cmds, fd, server_fd);
-                        // }
-                        // tick_numbered_pipes(fd);
+                        if (stat == 0 && print_userpipe_msg(ctx, fd, line) == 0) {
+                            execute_line(ctx, fd, server_fd);
+                        }
+                        tick_numbered_pipes(fd);
                     }
                     send_msg(fd, "% ");
                 }

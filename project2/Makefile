@@ -30,4 +30,4 @@ removetag0: $(ROUTE)removetag0.cpp
 	$(CXX) $(CXXFLAG) $< -o $(ROUTE)$@
 
 clean:
-	$(RM) npshell $(ROUTE)noop $(ROUTE)number $(ROUTE)removetag $(ROUTE)removetag0
+	$(RM) np_simple np_single_proc $(ROUTE)noop $(ROUTE)number $(ROUTE)removetag $(ROUTE)removetag0
