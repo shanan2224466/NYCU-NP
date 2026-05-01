@@ -20,8 +20,8 @@
 using namespace std;
 
 struct UserPipe {
-    int from_id;
-    int to_id;
+    size_t from_id;
+    size_t to_id;
     int fd[2];
 };
 
@@ -51,6 +51,7 @@ struct Client {
     string ip;
     unordered_map<string , string> env = {{"PATH", "bin:."}};
     vector<NumberedPipe> g_npipes;
+    string buffer;
 };
  
 static vector<struct UserPipe> g_user_pipes;
@@ -62,7 +63,7 @@ static void safe_pipe(int fd[2]) {
     }
 }
 
-void create_user_pipe(int from_id, int to_id) {
+void create_user_pipe(size_t from_id, size_t to_id) {
     UserPipe up;
     up.from_id = from_id;
     up.to_id = to_id;
@@ -70,18 +71,7 @@ void create_user_pipe(int from_id, int to_id) {
     g_user_pipes.push_back(up);
 }
 
-void remove_user_pipe(int from_id, int to_id) {
-    for (size_t i = 0; i < g_user_pipes.size(); i++) {
-        if (g_user_pipes[i].from_id == from_id && g_user_pipes[i].to_id == to_id) {
-            close(g_user_pipes[i].fd[0]);
-            close(g_user_pipes[i].fd[1]);
-            g_user_pipes.erase(g_user_pipes.begin() + i);
-            break;
-        }
-    }
-}
-
-int getpipeto(int from_id, int to_id) {
+int getpipeto(size_t from_id, size_t to_id) {
     for (size_t i = 0; i < g_user_pipes.size(); i++) {
         if (g_user_pipes[i].from_id == from_id && g_user_pipes[i].to_id == to_id) {
             return i;
@@ -110,6 +100,15 @@ void broadcast_msg(const char *msg) {
     for (const auto &c : clients) {
         send_msg(c.fd, msg);
     }
+}
+
+int get_client_index(int client_fd) {
+    for (size_t i = 0; i < clients.size(); i++) {
+        if (clients[i].fd == client_fd) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 string get_env(int client_fd, const string &var) {
@@ -145,26 +144,34 @@ int add_client(int client_fd, const char *ip, int port) {
     c.id = pos + 1;
     clients.insert(clients.begin() + pos, c);
 
-    send_msg(client_fd, "\n"
+    send_msg(client_fd, 
     "****************************************\n"
     "** Welcome to the information server. **\n"
     "****************************************\n");
     
-    string login = "*** User " + clients[pos].name + " entered from " + clients[pos].ip + ":" + to_string(clients[pos].port) + ". ***\n" + "% ";
+    string login = "*** User '" + clients[pos].name + "' entered from " + clients[pos].ip + ":" + to_string(clients[pos].port) + ". ***\n";
     broadcast_msg(login.c_str());
+    send_msg(client_fd, "% ");
     return 0;
 }
 
 void remove_client(int client_fd) {
-    for (size_t i = 0; i < clients.size(); i++) {
-        if (clients[i].fd == client_fd) {
-            close(clients[i].fd);
-            clients.erase(clients.begin() + i);
-            string logout = "*** User " + clients[i].name + " left. ***\n";
-            broadcast_msg(logout.c_str());
-            break;
+    int idx = get_client_index(client_fd);
+
+    for (auto it = g_user_pipes.begin(); it != g_user_pipes.end(); ) {
+        if (it->from_id == clients[idx].id || it->to_id == clients[idx].id) {
+            close(it->fd[0]);
+            close(it->fd[1]);
+            it = g_user_pipes.erase(it);
+        } else {
+            ++it;
         }
     }
+
+    close(clients[idx].fd);
+    string logout = "*** User '" + clients[idx].name + "' left. ***\n";
+    clients.erase(clients.begin() + idx);
+    broadcast_msg(logout.c_str());
 }
 
 void who(int client_fd) {
@@ -183,6 +190,7 @@ void yell(int client_fd, const vector<string> &args) {
     for (vector<string>::const_iterator it = args.begin() + 1; it != args.end(); it++) {
         msg += *it + " ";
     }
+    msg.pop_back();
     for (auto &c : clients) {
         if (c.fd == client_fd) {
             msg = "*** " + c.name + " yelled ***: " + msg + "\n";
@@ -207,6 +215,7 @@ void tell(int client_fd, const vector<string> &args) {
             for (vector<string>::const_iterator it = args.begin() + 2; it != args.end(); it++) {
                 msg += *it + " ";
             }
+            msg.pop_back();
             msg += "\n";
             send_msg(c.fd, msg.c_str());
             return;
@@ -320,7 +329,7 @@ static int handle_builtin(const vector<string> &args, int client_fd) {
             send_msg(client_fd, "Usage: printenv <var>\n");
             return 1;
         }
-        send_msg(client_fd, get_env(client_fd, args[1]).c_str());
+        send_msg(client_fd, (get_env(client_fd, args[1]) + "\n").c_str());
         return 1;
 
     } else if (args[0] == "who") {
@@ -425,9 +434,9 @@ static void wait_pids(const vector<pid_t> &pids) {
         waitpid(p, &status, 0);
 }
 
-int get_client_index(int client_fd) {
-    for (size_t i = 0; i < clients.size(); i++) {
-        if (clients[i].fd == client_fd) {
+int id2idx(int user_id) {
+    for (int i = 0; i < (int)clients.size(); i++) {
+        if ((int)clients[i].id == user_id) {
             return i;
         }
     }
@@ -436,6 +445,7 @@ int get_client_index(int client_fd) {
 
 static void tick_numbered_pipes(int client_fd) {
     int idx = get_client_index(client_fd);
+    if (idx < 0) return;
     for (auto &np : clients[idx].g_npipes)
         np.countdown--;
 }
@@ -483,48 +493,65 @@ static void command_exist(const LineContext &ctx, int client_fd) {
 
 int print_userpipe_msg(LineContext &ctx, int client_fd, string &line) {
     int idx = get_client_index(client_fd);
+    int from_id = ctx.user_pipe_from, to_id = ctx.user_pipe_to;
+    int id = clients[idx].id;
+    bool error = false;
 
-    if (getpipeto(ctx.user_pipe_from, idx + 1) == -1 && ctx.user_pipe_from != 0) {
-        if (ctx.user_pipe_from > (int)clients.size()) {
-            string msg = "*** Error: user #" + to_string(ctx.user_pipe_from) + " does not exist yet. ***\n";
+    if (from_id != 0) {
+        if (id2idx(from_id) < 0) {
+            string msg = "*** Error: user #" + to_string(from_id) + " does not exist yet. ***\n";
             send_msg(client_fd, msg.c_str());
+            error = true;
         }
-        else {
-            string msg = "*** Error: the pipe #" + to_string(ctx.user_pipe_from) + "->#" + to_string(idx + 1) + " already exist yet. ***\n";
+        else if (getpipeto(from_id, id) < 0) {
+            string msg = "*** Error: the pipe #" + to_string(from_id) + "->#" + to_string(clients[idx].id) + " does not exist yet. ***\n";
+            send_msg(client_fd, msg.c_str());
+            error = true;
+        }
+    }
+    if (to_id != 0) {
+        if (id2idx(to_id) < 0) {
+            string msg = "*** Error: user #" + to_string(to_id) + " does not exist yet. ***\n";
+            send_msg(client_fd, msg.c_str());
+            error = true;
+        }
+        else if (getpipeto(id, to_id) != -1) {
+            string msg = "*** Error: the pipe #" + to_string(id) + "->#" + to_string(to_id) + " already exists. ***\n";
+            send_msg(client_fd, msg.c_str());
+            error = true;
+        }
+    }
+
+    if (error) {
+        command_exist(ctx, client_fd);
+        return -1;
+    }
+
+    if (getpipeto(id, to_id) < 0 && to_id != 0) {
+        if (id2idx(to_id) < 0) {
+            string msg = "*** Error: user #" + to_string(to_id) + " does not exist yet. ***\n";
             send_msg(client_fd, msg.c_str());
             command_exist(ctx, client_fd);
             return -1;
         }
     }
-    if (getpipeto(idx + 1, ctx.user_pipe_to) < 0 && ctx.user_pipe_to != 0) {
-        if (ctx.user_pipe_to > (int)clients.size()) {
-            string msg = "*** Error: user #" + to_string(ctx.user_pipe_to) + " does not exist yet. ***\n";
-            send_msg(client_fd, msg.c_str());
-            command_exist(ctx, client_fd);
-            return -1;
-        }
-    }
-    else if (getpipeto(idx + 1, ctx.user_pipe_to) != -1 && ctx.user_pipe_to != 0) {
-        string msg = "*** Error: the pipe #" + to_string(idx + 1) + "->#" + to_string(ctx.user_pipe_to) + " already exists. ***\n";
+    else if (getpipeto(id, to_id) != -1 && to_id != 0) {
+        string msg = "*** Error: the pipe #" + to_string(id) + "->#" + to_string(to_id) + " already exists. ***\n";
         send_msg(client_fd, msg.c_str());
         command_exist(ctx, client_fd);
         return -1;
     }
 
-    if (ctx.user_pipe_from != 0) {
-        int pipe_idx = getpipeto(ctx.user_pipe_from, idx + 1);
+    if (from_id != 0) {
+        int pipe_idx = getpipeto(from_id, clients[idx].id);
         if (pipe_idx != -1) {
-            string msg = "*** " + clients[idx].name + " (#" + to_string(idx + 1) + ") just received from " + clients[ctx.user_pipe_from - 1].name + " (#" + to_string(ctx.user_pipe_from) + ") by '" + line + "' ***\n";
-            int from_fd = clients[ctx.user_pipe_from - 1].fd;
-            send_msg(from_fd, msg.c_str());
-            send_msg(client_fd, msg.c_str());
+            string msg = "*** " + clients[idx].name + " (#" + to_string(id) + ") just received from " + clients[id2idx(from_id)].name + " (#" + to_string(from_id) + ") by '" + line + "' ***\n";
+            broadcast_msg(msg.c_str());
         }
     }
-    if (ctx.user_pipe_to != 0) {
-        string msg = "*** " + clients[idx].name + " (#" + to_string(idx + 1) + ") just piped '" + line + "' to " + clients[ctx.user_pipe_to - 1].name + " (#" + to_string(ctx.user_pipe_to) + ") ***\n";
-        int to_fd = clients[ctx.user_pipe_to - 1].fd;
-        send_msg(to_fd, msg.c_str());
-        send_msg(client_fd, msg.c_str());
+    if (to_id != 0) {
+        string msg = "*** " + clients[idx].name + " (#" + to_string(id) + ") just piped '" + line + "' to " + clients[id2idx(to_id)].name + " (#" + to_string(to_id) + ") ***\n";
+        broadcast_msg(msg.c_str());
     }
     return 0;
 }
@@ -536,8 +563,8 @@ static void execute_line(LineContext &ctx, int client_fd, int server_fd) {
     static const int BATCH_SIZE = 50;
 
     size_t batch_start = 0;
-    int idx = get_client_index(client_fd);
-    setenv("PATH", clients[idx].env["PATH"].c_str(), 1);
+    int id = get_client_index(client_fd);
+    setenv("PATH", clients[id].env["PATH"].c_str(), 1);
 
     while (batch_start < ctx.cmds.size()) {
         size_t batch_end = min(batch_start + (size_t)BATCH_SIZE, ctx.cmds.size());
@@ -565,7 +592,7 @@ static void execute_line(LineContext &ctx, int client_fd, int server_fd) {
 
             int incoming_write_fd = -1;
             if (ctx.user_pipe_from != 0 && idx == 0) {
-                int pipe_idx = getpipeto(ctx.user_pipe_from, get_client_index(client_fd) + 1);
+                int pipe_idx = getpipeto(ctx.user_pipe_from, clients[get_client_index(client_fd)].id);
                 if (pipe_idx != -1) {
                     incoming_write_fd = g_user_pipes[pipe_idx].fd[1];
                     in_fd = g_user_pipes[pipe_idx].fd[0];
@@ -603,8 +630,8 @@ static void execute_line(LineContext &ctx, int client_fd, int server_fd) {
             }
 
             if (ctx.user_pipe_to != 0 && idx == ctx.cmds.size() - 1) {
-                int idx = get_client_index(client_fd);
-                create_user_pipe(clients[idx].id, ctx.user_pipe_to);
+                int id = get_client_index(client_fd);
+                create_user_pipe(clients[id].id, ctx.user_pipe_to);
                 out_fd = g_user_pipes.back().fd[1];
                 close_out = false;
             }
@@ -714,34 +741,45 @@ int main() {
                     }
                 }
                 else {
-                    char inputBuf[15000];
+                    char tmp[15001];
                     ssize_t n;
-                    if ((n = recv(fd, inputBuf, sizeof(inputBuf) - 1, 0)) > 0) {
-                        inputBuf[n] = '\0';
-                        
-                        string line(inputBuf);
+                    int idx = get_client_index(fd);
 
-                        if (line.empty() || line.find_first_not_of(" \t\r\n") == string::npos)
-                            continue;
+                    if ((n = recv(fd, tmp, sizeof(tmp) - 1, 0)) > 0) {
+                        tmp[n] = '\0';
+                        clients[idx].buffer += tmp;
 
-                        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+                        size_t pos;
+                        while ((pos = clients[idx].buffer.find('\n')) != string::npos) {
+                            string line = clients[idx].buffer.substr(0, pos);
+                            clients[idx].buffer.erase(0, pos + 1);
 
-                        LineContext ctx;
-                        ctx = parse_line(line);
-                        if (ctx.cmds.empty()) continue;
+                            if (line.empty() || line.find_first_not_of(" \t\r\n") == string::npos)
+                                continue;
 
-                        int stat = handle_builtin(ctx.cmds[0].args, fd);
-                        if (stat == -1) {
-                            FD_CLR(fd, &current_fd_set);
-                            continue;
+                            line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+                            LineContext ctx;
+                            ctx = parse_line(line);
+                            if (ctx.cmds.empty()) continue;
+
+                            int stat = handle_builtin(ctx.cmds[0].args, fd);
+                            if (stat == -1) {
+                                FD_CLR(fd, &current_fd_set);
+                                break;
+                            }
+
+                            if (stat == 0 && print_userpipe_msg(ctx, fd, line) == 0) {
+                                execute_line(ctx, fd, server_fd);
+                            }
+                            tick_numbered_pipes(fd);
+                            send_msg(fd, "% ");
                         }
-
-                        if (stat == 0 && print_userpipe_msg(ctx, fd, line) == 0) {
-                            execute_line(ctx, fd, server_fd);
-                        }
-                        tick_numbered_pipes(fd);
+                    } else if (n == 0) {
+                        remove_client(fd);
+                        FD_CLR(fd, &current_fd_set);
+                        continue;
                     }
-                    send_msg(fd, "% ");
                 }
             }
         }
